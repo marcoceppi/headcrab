@@ -2,21 +2,25 @@
 var redis  = require('redis'),
 	lamarr = require('./lamarr'),
 	fs     = require('fs'),
+	os     = require('os'),
 	repeat = require('repeat'),
 	format = require('util').format,
 	async  = require('async'),
+	logule = require('logule'),
 	argv   = require('optimist')
-		.usage('Headcrab - Used to crawl and consume websites\nUsage: $0 -v -q -c [num] url')
+		.usage('Headcrab - Used to crawl and consume websites\nUsage: $0 -v -w -q -c [num] -s [num] url')
 		.demand(['c', 1])
 		.describe('c', 'The number of workers to use')
 		.describe('v', 'Make this really verbose')
 		.describe('q', 'Make this super quiet')
+		.describe('w', 'Super verbose mode (-vv)')
+		.describe('s', 'Seconds to sleep between queries')
 		.boolean(['v', 'q'])
 		.default('c', 5)
+		.default('s', 0)
 		.argv;
 
 process.on('SIGTERM', function()
-function output(text, lvl)
 {
 	cleanup();
 	process.exit(1);
@@ -35,19 +39,6 @@ function cleanup()
 	messenger.quit();
 	logule.info('Goodbye');
 }	
-	if( lvl != 'error' )
-	{
-		if( argv.q || (!argv.v && lvl != 'general') )
-		{
-			return;
-		}
-	}
-	// Maybe replace this whole bit with Date().toJSON();...
-	d = new Date();
-	dts = format("%s.%s.%s %s:%s:%s", d.getFullYear(), ("0" + (d.getMonth()+1)).slice(-2), ("0" + d.getDate()).slice(-2), 
-		("0" + d.getHours()).slice(-2), ("0" + d.getMinutes()).slice(-2), ("0" + d.getSeconds()).slice(-2));
-	console.log(format('%s (%s): %s', dts, lvl, text));
-}
 
 /**
  * Show Processing Status
@@ -57,7 +48,7 @@ function status()
 {
 	client.GET(config.namespace + ':total', function(err, total)
 	{
-		output(format("UPDATE: %s urls processed so far.", total));
+		logule.info(format("UPDATE: %s urls processed so far.", total));
 	});
 }
 
@@ -70,30 +61,36 @@ function status()
  */
 function work(channel, worker)
 {
-	output(format("%s Processing new %s", worker), 'debug');
+	log[channel] = logule.sub(channel);
 	client.LPOP(config.namespace + ':queue', function(err, url)
 	{
+		log[worker] = log[channel].sub(worker);
 		if( err || !url )
 		{
-			output(format("%s.%s: Got error or no results (%s): '%s'", channel, worker, err, url), 'debug');
-			output(format("%s: Returning %s back to the queue", channel, worker), 'debug');
+			if( argv.w )
+			{
+				log[worker].debug(format("Got error or no results (%s): '%s'", err, url));
+				log[channel].debug(format("Returning %s back to the queue", worker));
+			}
 			client.publish(channel, worker);
-
 			return;
 		}
-		output(format("%s.%s: Got the following URL: '%s'", channel, worker, url), 'debug');
+
+		log[channel].debug(format("Processing new available worker: %s", worker));
+		log[worker].debug(format("Got the following URL: '%s'", url));
 
 		lamarr.procreate(url, function(err, moar_urls, browser)
 		{
 			if( err || !moar_urls )
 			{
 				// Just push the worker back in the Queue, walk away.
-				output(format("%s.%s: Either Err (%s) or no URLs found (%s) at %s", channel, worker, err, moar_urls.length, url), "debug");
+				log[worker].debug(format("Either Err (%s) or no URLs found (%s) at %s", err, moar_urls.length, url));
+				log[channel].debug(format("Returning %s back to the queue", worker));
 				client.publish(channel, worker);
 				return;
 			}
 
-			output(format("%s.%s: Found %s URLs on %s", channel, worker, moar_urls.length, url), "debug");
+			log[worker].debug(format("Found %s URLs on %s", moar_urls.length, url));
 			// Lamarr returns a list of URLS (or nil)
 			for(var key in moar_urls)
 			{
@@ -123,21 +120,35 @@ function format_url(url, domain, cb)
 var data = fs.readFileSync('./config.json'), config;
 try
 {
-	output('Loading configuration values...', 'debug');
+	logule.trace('Loading configuration values...');
 	config = JSON.parse(data);
-	output('Configuration loaded!');
+	logule.info('Configuration loaded!');
 }
 catch(err)
 {
-	output('Failed to load configuration', 'error');
-	output(err, 'error');
+	logule.error('Failed to load configuration');
+	logule.line(err);
 	process.exit(1);
 }
+
+var log = {};
 
 /**
  * Start the program.
  */
-output('Creating Redis connections...', 'debug');
+logule.suppress('debug', 'line', 'trace');
+
+if( argv.v )
+{
+	logule.allow('debug', 'line', 'trace');
+}
+
+if( argv.q )
+{
+	logule.suppress('debug', 'warn', 'trace', 'line');
+}
+
+logule.trace('Creating Redis connections...');
 client = redis.createClient(config.redis.port, config.redis.host);
 messenger = redis.createClient(config.redis.port, config.redis.host);
 
@@ -146,10 +157,10 @@ client.stream.on('connect', function()
 	// Lets kick off this shindig! Clear old queues, create new "workers"
 	// REMOVE ME SOON
 	client.SET(config.namespace + ':total', 0);
-	output('Redis connected!', 'debug');
-	output('Ready and processing!');
+	logule.debug('Redis connected!');
+	logule.info('Ready and processing!');
 	// Get some status goodness rolling
-	repeat(status).every(10, 's').start.in(5, 's');
+	repeat(status).every(5, 's').start.in(1, 's');
 
 	// We need to seed the message queue.
 	process.nextTick(function()
@@ -158,14 +169,20 @@ client.stream.on('connect', function()
 		{
 			format_url(url, function(err, furl)
 			{
-				output(format('Adding %s (%s) to queue', url, furl), 'debug');
+				logule.trace(format('Adding %s (%s) to queue', url, furl));
 				client.RPUSH(config.namespace + ':queue', furl, cb);
 			});
 		},
 		function(err)
 		{
-			// I don't really care?
-			output('URLs are loaded! Error? ' + err, 'debug');
+			if( err )
+			{
+				logule.error(format('Could not load URLs: %s', err));
+			}
+			else
+			{
+				logule.debug('URLs are loaded!');
+			}
 		});
 	});
 });
