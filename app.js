@@ -15,10 +15,26 @@ var redis  = require('redis'),
 		.default('c', 5)
 		.argv;
 
+process.on('SIGTERM', function()
 function output(text, lvl)
 {
-	lvl = lvl || 'general';
+	cleanup();
+	process.exit(1);
+});
+process.on('SIGINT', function()
+{
+	cleanup();
+	process.exit(0);
+});
 
+function cleanup()
+{
+	console.log('');
+	logule.trace('Closing connections to redis...');
+	client.quit();
+	messenger.quit();
+	logule.info('Goodbye');
+}	
 	if( lvl != 'error' )
 	{
 		if( argv.q || (!argv.v && lvl != 'general') )
