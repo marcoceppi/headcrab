@@ -1,20 +1,32 @@
 var Browser = require('zombie'),
 	assert  = require('assert');
 
+// All Lamarr wants to do is couple with you.
 exports.procreate = function(url, cb)
 {
 	browser = new Browser();
-	browser.visit('http://marcoceppi.com', function(e, browser, status)
+	// Trust me for now that URL will be a fully qualified URL.
+	// Don't trust anyone else though
+	browser.visit(url, function(e, browser, status)
 	{
-		anchorsAway = browser.document.querySelectorAll('a');
-		for(var anchor in anchorsAway)
+		process.nextTick(function()
 		{
-			dom_attr = anchorsAway[anchor]._attributes;
-			if( typeof dom_attr == 'object' && dom_attr.hasOwnProperty('href') )
+			anchorsAway = browser.document.querySelectorAll('a');
+			var urls = new Array();
+			for(var anchor in anchorsAway)
 			{
-				console.log(dom_attr.href._nodeValue);
+				dom_attr = anchorsAway[anchor]._attributes;
+				if( typeof dom_attr == 'object' && dom_attr.hasOwnProperty('href') )
+				{
+					href = dom_attr.href._nodeValue;
+					if( href && href.charAt(0) != '#' )
+					{
+						urls.push(href);
+					}
+				}
 			}
-		}
+			cb(null, urls, browser);
+		});
 	});
 }
 
