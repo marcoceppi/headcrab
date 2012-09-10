@@ -1,8 +1,10 @@
+// LOOK AT ALL THE THINGS I REQUIRE.
 var redis  = require('redis'),
 	lamarr = require('./lamarr'),
 	fs     = require('fs'),
 	repeat = require('repeat'),
-    format = require('util').format,
+	format = require('util').format,
+	async  = require('async'),
 	argv   = require('optimist')
 		.usage('Headcrab - Used to crawl and consume websites\nUsage: $0 -v -q -c [num] url')
 		.demand(['c', 1])
@@ -31,7 +33,26 @@ function output(text, lvl)
 	console.log(format('%s (%s): %s', dts, lvl, text));
 }
 
-function process(channel, worker)
+/**
+ * Show Processing Status
+ *
+ */
+function status()
+{
+	client.GET(config.namespace + ':total', function(err, total)
+	{
+		output(format("UPDATE: %s urls processed so far.", total));
+	});
+}
+
+/**
+ * Process a new item
+ * This is a simple "web worker"
+ *
+ * @param channel - Where to return [worker]
+ * @param worker - Unique name "web worker"
+ */
+function work(channel, worker)
 {
 	output(format("%s Processing new %s", worker), 'debug');
 	client.LPOP(config.namespace + ':queue', function(err, url)
@@ -48,6 +69,15 @@ function process(channel, worker)
 
 		lamarr.procreate(url, function(err, moar_urls, browser)
 		{
+			if( err || !moar_urls )
+			{
+				// Just push the worker back in the Queue, walk away.
+				output(format("%s.%s: Either Err (%s) or no URLs found (%s) at %s", channel, worker, err, moar_urls.length, url), "debug");
+				client.publish(channel, worker);
+				return;
+			}
+
+			output(format("%s.%s: Found %s URLs on %s", channel, worker, moar_urls.length, url), "debug");
 			// Lamarr returns a list of URLS (or nil)
 			for(var key in moar_urls)
 			{
@@ -55,6 +85,20 @@ function process(channel, worker)
 			}
 		});
 	});
+}
+
+/**
+ * Queue URL
+ * 
+ * @param url
+ * @param domain - OPTIONAL
+ * @param callback(err, final_url)
+ */
+function format_url(url, domain, cb)
+{
+	cb = cb || domain;
+	// TODO: Check the URLs formatting!
+	cb(null, url);
 }
 
 /**
@@ -84,15 +128,28 @@ messenger = redis.createClient(config.redis.port, config.redis.host);
 client.stream.on('connect', function()
 {
 	// Lets kick off this shindig! Clear old queues, create new "workers"
-	client.SET(config.namespace + ':total', 5);
+	// REMOVE ME SOON
+	client.SET(config.namespace + ':total', 0);
 	output('Redis connected!', 'debug');
 	output('Ready and processing!');
-	repeat(function()
+	// Get some status goodness rolling
+	repeat(status).every(10, 's').start.in(5, 's');
+
+	// We need to seed the message queue.
+	process.nextTick(function()
 	{
-		client.GET(config.namespace + ':total', function(err, total)
+		async.forEach(argv._, function(url, cb)
 		{
-			output(format("UPDATE: %s items processed so far.", total));
+			format_url(url, function(err, furl)
+			{
+				output(format('Adding %s (%s) to queue', url, furl), 'debug');
+				client.RPUSH(config.namespace + ':queue', furl, cb);
+			});
+		},
+		function(err)
+		{
+			// I don't really care?
+			output('URLs are loaded! Error? ' + err, 'debug');
 		});
-	}).every(10, 's')
-	.start.in(5, 's');
+	});
 });
