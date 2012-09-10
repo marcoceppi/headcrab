@@ -8,11 +8,12 @@
   "dependencies": {
     "redis": "*",
     "hiredis": "*",
-    "glob": "*",
     "async": "*",
     "node.extend": "*",
     "zombie": "*",
     "optimist": "*",
-    "repeat": "*"
+    "repeat": "*",
+    "logule": "*",
+    "word-generator": "*"
   }
 }

@@ -7,6 +7,7 @@ var redis  = require('redis'),
 	format = require('util').format,
 	async  = require('async'),
 	logule = require('logule'),
+	wg     = require('word-generator'),
 	argv   = require('optimist')
 		.usage('Headcrab - Used to crawl and consume websites\nUsage: $0 -v -w -q -c [num] -s [num] url')
 		.demand(['c', 1])
@@ -94,7 +95,42 @@ function work(channel, worker)
 			// Lamarr returns a list of URLS (or nil)
 			for(var key in moar_urls)
 			{
+				nurl = moar_urls[key];
+				if( nurl.charAt(0) == '/' && nurl.charAt(1) == '/' )
+				{
+					nnurl = format("%s%s", browser.location.protocol, nurl);
+				}
+				else if( nurl.charAt(0) == '/' || nurl.indexOf('http://') == -1 || nurl.indexOf('https://') == -1 )
+				{
+					// Build the URL!
+					nnurl = format("%s//%s/%s", browser.location.protocol, browser.location.host, nurl);
+				}
+				else
+				{
+					nnurl = nurl;
+				}
 				
+				if( argv.w )
+				{
+					log[worker].debug(format("Adding the following url: %s from (%s)", nnurl, nurl));
+				}
+				client.RPUSH(config.namespace + ':queue', nnurl);
+			}
+
+			client.INCRBY(config.namespace + ':total', moar_urls.length);
+
+			if( argv.s > 0 )
+			{
+				setTimeout(function()
+				{
+					log[channel].debug(format("Returning %s back to the queue", worker));
+					client.publish(channel, worker);
+				}, argv.s * 1000);
+			}
+			else
+			{
+				log[channel].debug(format("Returning %s back to the queue", worker));
+				client.publish(channel, worker);
 			}
 		});
 	});
@@ -184,5 +220,22 @@ client.stream.on('connect', function()
 				logule.debug('URLs are loaded!');
 			}
 		});
+	});
+
+	messenger.subscribe(config.namespace+':'+os.hostname()+':workers', function()
+	{
+		logule.debug('Subscribed to '+config.namespace+':'+os.hostname()+':workers');
+		messenger.on('message', work);
+
+		logule.trace(format('Creating %s workers...', argv.c));
+		words = new wg.WordsGenerator(8);
+		workers = words.generateWordsToObject(argv.c);
+
+		// ASYNC THIS?
+		for(var worker in workers)
+		{
+			logule.sub(config.namespace+':'+os.hostname()+':workers').debug(format("Adding %s to the queue", worker));
+			client.publish(config.namespace+':'+os.hostname()+':workers', worker);
+		}
 	});
 });
