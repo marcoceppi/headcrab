@@ -53,7 +53,14 @@ function status()
 {
 	client.GET(config.namespace + ':total', function(err, total)
 	{
-		logule.info(format("UPDATE: %s urls processed so far.", total));
+		// UGH, this sucks now. DAMN YOU NON-BLOCKING LANGUAGES
+		client.HLEN(config.namespace + ':done:404', function(err, total_404)
+		{
+			client.HLEN(config.namespace + ':done:500', function(err, total_500)
+			{
+				logule.info(format("UPDATE: %s urls processed so far. Status codes, 500: %s, 404: %s", total, total_500, total_404));
+			});
+		});
 	});
 }
 
@@ -86,6 +93,12 @@ function work(channel, worker)
 
 		lamarr.procreate(url, function(err, moar_urls, code, browser)
 		{
+			if( !err )
+			{
+				// If there is no "real" error, then just drop the URL in to a bucket
+				client.HINCRBY(config.namespace + ':done:' + code, url, 1);
+			}
+
 			if( err || !moar_urls )
 			{
 				// Just push the worker back in the Queue, walk away.
@@ -115,16 +128,29 @@ function work(channel, worker)
 
 				if( clean_url )
 				{
-					if( argv.w )
+					client.HEXISTS(config.namespace + ':done:200', clean_url, function(err, exists)
 					{
-						log[worker].debug(format("Adding the following url: %s from (%s)", clean_url, raw_url));
-					}
+						if( !exists && !err )
+						{
+							if( argv.w )
+							{
+								log[worker].debug(format("Adding the following url: %s from (%s)", clean_url, raw_url));
+							}
 
-					client.RPUSH(config.namespace + ':queue', clean_url);
+							client.RPUSH(config.namespace + ':queue', clean_url);
+						}
+						else
+						{
+							if( argv.w )
+							{
+								log[worker].debug(format("URL (%s) already exists.", clean_url));
+							}
+						}
+					});
 				}
 			}
 
-			client.INCRBY(config.namespace + ':total', moar_urls.length);
+			client.INCR(config.namespace + ':total');
 
 			if( argv.s > 0 )
 			{
@@ -229,6 +255,14 @@ client.stream.on('connect', function()
 		logule.debug('Cleaning old queue data');
 		client.SET(config.namespace + ':total', 0);
 		client.DEL(config.namespace + ':queue');
+		client.KEYS(config.namespace + ':done:*', function(err, keys)
+		{
+			keys.forEach(function(key, i)
+			{
+				client.DEL(key);
+			});
+		});
+
 		// We need to seed the message queue.
 		process.nextTick(function()
 		{
