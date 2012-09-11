@@ -18,7 +18,8 @@ var redis  = require('redis'),
 		.describe('q', 'Make this super quiet')
 		.describe('v', 'Make this really verbose')
 		.describe('w', 'Super verbose mode (-vv)')
-		.boolean(['v', 'q', 'w'])
+		.describe('x', 'Continue previoius session')
+		.boolean(['v', 'q', 'w', 'x'])
 		.string('d')
 		.default('c', 5)
 		.default('s', 0)
@@ -217,35 +218,39 @@ messenger = redis.createClient(config.redis.port, config.redis.host);
 
 client.stream.on('connect', function()
 {
-	// Lets kick off this shindig! Clear old queues, create new "workers"
-	// REMOVE ME SOON
-	client.SET(config.namespace + ':total', 0);
+	// Lets kick off this shindig!
 	logule.debug('Redis connected!');
 	logule.info('Ready and processing!');
 	// Get some status goodness rolling
 	repeat(status).every(5, 's').start.in(1, 's');
 
-	// We need to seed the message queue.
-	process.nextTick(function()
+	if( !argv.x )
 	{
-		async.forEach(argv._, function(url, cb)
+		logule.debug('Cleaning old queue data');
+		client.SET(config.namespace + ':total', 0);
+		client.DEL(config.namespace + ':queue');
+		// We need to seed the message queue.
+		process.nextTick(function()
 		{
-			furl = format_url(url);
-			logule.trace(format('Adding %s (%s) to queue', url, furl));
-			client.RPUSH(config.namespace + ':queue', furl, cb);
-		},
-		function(err)
-		{
-			if( err )
+			async.forEach(argv._, function(url, cb)
 			{
-				logule.error(format('Could not load URLs: %s', err));
-			}
-			else
+				furl = format_url(url);
+				logule.trace(format('Adding %s (%s) to queue', url, furl));
+				client.RPUSH(config.namespace + ':queue', furl, cb);
+			},
+			function(err)
 			{
-				logule.debug('URLs are loaded!');
-			}
+				if( err )
+				{
+					logule.error(format('Could not load URLs: %s', err));
+				}
+				else
+				{
+					logule.debug('URLs are loaded!');
+				}
+			});
 		});
-	});
+	}
 
 	messenger.subscribe(config.namespace+':'+os.hostname()+':workers', function()
 	{
