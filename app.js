@@ -10,14 +10,16 @@ var redis  = require('redis'),
 	wg     = require('word-generator'),
 	earl   = require('url'),
 	argv   = require('optimist')
-		.usage('Headcrab - Used to crawl and consume websites\nUsage: $0 -v -w -q -c [num] -s [num] url')
+		.usage('Headcrab - Used to crawl and consume websites\nUsage: $0 -v -w -q -c [num] -s [num] -d [domain] url')
 		.demand(['c', 1])
 		.describe('c', 'The number of workers to use')
-		.describe('v', 'Make this really verbose')
-		.describe('q', 'Make this super quiet')
-		.describe('w', 'Super verbose mode (-vv)')
+		.describe('d', 'The root domain used during lookups')
 		.describe('s', 'Seconds to sleep between queries')
-		.boolean(['v', 'q'])
+		.describe('q', 'Make this super quiet')
+		.describe('v', 'Make this really verbose')
+		.describe('w', 'Super verbose mode (-vv)')
+		.boolean(['v', 'q', 'w'])
+		.string('d')
 		.default('c', 5)
 		.default('s', 0)
 		.argv;
@@ -102,8 +104,13 @@ function work(channel, worker)
 
 				if( argv.d )
 				{
+					url_parts = earl.parse(clean_url);
+					if( url_parts.hostname.indexOf(argv.d) == -1 )
+					{
+						log[worker].debug(format("URL %s is not in the %s network", clean_url, argv.d));
+						clean_url = null;
+					}
 				}
-				
 
 				if( clean_url )
 				{
