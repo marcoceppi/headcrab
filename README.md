@@ -1,4 +1,5 @@
 # Headcrab
+
 So I can make a zombie out of you.
 
 # Install
@@ -9,11 +10,11 @@ Install Node, Redis, and all modules:
 
 # Configure
 
-Edit the config.json file
+Move `config.json.sample` to `config.json` and edit accordingly.
 
 # Run
 
-    node index.js
+    node app.js
 
 # Problems?
 
