@@ -4,7 +4,7 @@ So I can make a zombie out of you.
 
 # Install
 
-Install Node, Redis, and all modules:
+Install Node, Redis, then all modules:
 
     npm install
 
