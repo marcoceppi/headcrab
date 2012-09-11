@@ -81,8 +81,8 @@ function work(channel, worker)
 		{
 			if( argv.w )
 			{
-				log[worker].debug(format("Got error or no results (%s): '%s'", err, url));
-				log[channel].debug(format("Returning %s back to the queue", worker));
+				//log[worker].debug(format("Got error or no results (%s): '%s'", err, url));
+				//log[channel].debug(format("Returning %s back to the queue", worker));
 			}
 			client.publish(channel, worker);
 			return;
@@ -110,71 +110,80 @@ function work(channel, worker)
 
 			log[worker].debug(format("Found %s URLs on %s (code: %s)", moar_urls.length, url, code));
 
-			// Lamarr returns a list of URLS (or nil)
-			for(var key in moar_urls)
+			process_urls(channel, worker, moar_urls, browser, function(err, channel, worker)
 			{
-				raw_url = moar_urls[key];
-				clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
-
-				if( argv.d )
+				if( argv.s > 0 )
 				{
-					url_parts = earl.parse(clean_url);
-					if( url_parts.hostname.indexOf(argv.d) == -1 )
+					setTimeout(function()
 					{
-						log[worker].debug(format("URL %s is not in the %s network", clean_url, argv.d));
-						clean_url = null;
-					}
+						log[channel].debug(format("Returning %s back to the queue", worker));
+						client.publish(channel, worker);
+					}, argv.s * 1000);
 				}
-
-				if( clean_url )
-				{
-					client.HEXISTS(config.namespace + ':done:200', clean_url, function(err, exists)
-					{
-						if( !exists && !err )
-						{
-							if( argv.w )
-							{
-								log[worker].debug(format("Adding the following url: %s from (%s)", clean_url, raw_url));
-							}
-
-							client.RPUSH(config.namespace + ':queue', clean_url);
-						}
-						else
-						{
-							if( argv.w )
-							{
-								log[worker].debug(format("URL (%s) already exists.", clean_url));
-							}
-						}
-					});
-				}
-			}
-
-			client.INCR(config.namespace + ':total');
-
-			if( argv.s > 0 )
-			{
-				setTimeout(function()
+				else
 				{
 					log[channel].debug(format("Returning %s back to the queue", worker));
 					client.publish(channel, worker);
-				}, argv.s * 1000);
-			}
-			else
-			{
-				log[channel].debug(format("Returning %s back to the queue", worker));
-				client.publish(channel, worker);
-			}
+				}
+
+				client.INCR(config.namespace + ':total');
+			});
 		});
 	});
 }
 
+function process_urls(channel, worker, urls, browser, cb)
+{
+	// Lamarr returns a list of URLS (or nil)
+	for(var key in urls)
+	{
+		raw_url = urls[key];
+		clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
+
+		if( argv.d )
+		{
+			url_parts = earl.parse(clean_url);
+			if( url_parts.hostname.indexOf(argv.d) == -1 )
+			{
+				log[worker].debug(format("URL %s is not in the %s network", clean_url, argv.d));
+				clean_url = false;
+			}
+		}
+
+		if( clean_url )
+		{
+//			log[worker].info("IS IT CLEAN ENOUGH!? "+clean_url);
+			//client.HEXISTS(config.namespace + ':done:200', clean_url, function(err, exists, foo)
+			//{
+//				if( exists == 0 && !err )
+//				{
+					//if( argv.w )
+					//{
+//						log[worker].debug(format("Adding the following url: %s from (%s)", clean_url, raw_url));
+					//}
+
+					client.RPUSH(config.namespace + ':queue', clean_url);
+//				}
+//				else
+//				{
+//					if( argv.w )
+//					{
+//						log[worker].debug(format("URL (%s) already exists.", clean_url));
+//					}
+//				}
+//			});
+		}
+	}
+
+	cb(null, channel, worker);
+}
+
 /**
- * Queue URL
+ * Formatn URL
  * 
  * @param url
  * @param domain - OPTIONAL
- * @param callback(err, final_url)
+ * @param protocol - OPTIONAL
  */
 function format_url(url, domain, protocol)
 {
@@ -190,10 +199,10 @@ function format_url(url, domain, protocol)
 	{
 		ret_url = format("%s%s", protocol, url);
 	}
-	else if( url.charAt(0) == '/' || url.indexOf('http://') == -1 || url.indexOf('https://') == -1 )
+	else if( url.charAt(0) == '/' || (url.indexOf('http://') == -1 && url.indexOf('https://') == -1) )
 	{
 		// Build the URL!
-		format_pattern = ( url.charAt(-1) == '/' ) ? "%s%s" : "%s/%s";
+		format_pattern = ( url.charAt(0) == '/' ) ? "%s%s" : "%s/%s";
 		ret_url = format(format_pattern, domain, url);
 	}
 	else
@@ -268,9 +277,8 @@ client.stream.on('connect', function()
 		{
 			async.forEach(argv._, function(url, cb)
 			{
-				furl = format_url(url);
-				logule.trace(format('Adding %s (%s) to queue', url, furl));
-				client.RPUSH(config.namespace + ':queue', furl, cb);
+				logule.trace(format('Adding %s (%s) to queue', url, url));
+				client.RPUSH(config.namespace + ':queue', url, cb);
 			},
 			function(err)
 			{
