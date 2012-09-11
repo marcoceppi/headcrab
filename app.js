@@ -8,6 +8,7 @@ var redis  = require('redis'),
 	async  = require('async'),
 	logule = require('logule'),
 	wg     = require('word-generator'),
+	earl   = require('url'),
 	argv   = require('optimist')
 		.usage('Headcrab - Used to crawl and consume websites\nUsage: $0 -v -w -q -c [num] -s [num] url')
 		.demand(['c', 1])
@@ -80,7 +81,7 @@ function work(channel, worker)
 		log[channel].debug(format("Processing new available worker: %s", worker));
 		log[worker].debug(format("Got the following URL: '%s'", url));
 
-		lamarr.procreate(url, function(err, moar_urls, browser)
+		lamarr.procreate(url, function(err, moar_urls, code, browser)
 		{
 			if( err || !moar_urls )
 			{
@@ -91,30 +92,28 @@ function work(channel, worker)
 				return;
 			}
 
-			log[worker].debug(format("Found %s URLs on %s", moar_urls.length, url));
+			log[worker].debug(format("Found %s URLs on %s (code: %s)", moar_urls.length, url, code));
+
 			// Lamarr returns a list of URLS (or nil)
 			for(var key in moar_urls)
 			{
-				nurl = moar_urls[key];
-				if( nurl.charAt(0) == '/' && nurl.charAt(1) == '/' )
+				raw_url = moar_urls[key];
+				clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
+
+				if( argv.d )
 				{
-					nnurl = format("%s%s", browser.location.protocol, nurl);
-				}
-				else if( nurl.charAt(0) == '/' || nurl.indexOf('http://') == -1 || nurl.indexOf('https://') == -1 )
-				{
-					// Build the URL!
-					nnurl = format("%s//%s/%s", browser.location.protocol, browser.location.host, nurl);
-				}
-				else
-				{
-					nnurl = nurl;
 				}
 				
-				if( argv.w )
+
+				if( clean_url )
 				{
-					log[worker].debug(format("Adding the following url: %s from (%s)", nnurl, nurl));
+					if( argv.w )
+					{
+						log[worker].debug(format("Adding the following url: %s from (%s)", clean_url, raw_url));
+					}
+
+					client.RPUSH(config.namespace + ':queue', clean_url);
 				}
-				client.RPUSH(config.namespace + ':queue', nnurl);
 			}
 
 			client.INCRBY(config.namespace + ':total', moar_urls.length);
@@ -143,11 +142,32 @@ function work(channel, worker)
  * @param domain - OPTIONAL
  * @param callback(err, final_url)
  */
-function format_url(url, domain, cb)
+function format_url(url, domain, protocol)
 {
-	cb = cb || domain;
+	protocol = protocol || 'http';
+
+	if( !domain )
+	{
+		return url;
+	}
+
 	// TODO: Check the URLs formatting!
-	cb(null, url);
+	if( url.charAt(0) == '/' && url.charAt(1) == '/' )
+	{
+		ret_url = format("%s%s", protocol, url);
+	}
+	else if( url.charAt(0) == '/' || url.indexOf('http://') == -1 || url.indexOf('https://') == -1 )
+	{
+		// Build the URL!
+		format_pattern = ( url.charAt(-1) == '/' ) ? "%s%s" : "%s/%s";
+		ret_url = format(format_pattern, domain, url);
+	}
+	else
+	{
+		ret_url = url;
+	}
+
+	return ret_url;
 }
 
 /**
@@ -203,11 +223,9 @@ client.stream.on('connect', function()
 	{
 		async.forEach(argv._, function(url, cb)
 		{
-			format_url(url, function(err, furl)
-			{
-				logule.trace(format('Adding %s (%s) to queue', url, furl));
-				client.RPUSH(config.namespace + ':queue', furl, cb);
-			});
+			furl = format_url(url);
+			logule.trace(format('Adding %s (%s) to queue', url, furl));
+			client.RPUSH(config.namespace + ':queue', furl, cb);
 		},
 		function(err)
 		{

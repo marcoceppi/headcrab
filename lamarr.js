@@ -5,6 +5,8 @@ var Browser = require('zombie'),
 exports.procreate = function(url, cb)
 {
 	browser = new Browser();
+	browser.runScripts = false;
+	browser.silent = true;
 	// Trust me for now that URL will be a fully qualified URL.
 	// Don't trust anyone else though
 	browser.visit(url, function(e, browser, status)
@@ -25,7 +27,7 @@ exports.procreate = function(url, cb)
 					}
 				}
 			}
-			cb(null, urls, browser);
+			cb(null, urls, status, browser);
 		});
 	});
 }
