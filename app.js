@@ -52,14 +52,20 @@ function cleanup()
  */
 function status()
 {
-	client.GET(config.namespace + ':total', function(err, total)
+	client.LLEN(config.namespace + ':queue', function(err, total)
 	{
-		// UGH, this sucks now. DAMN YOU NON-BLOCKING LANGUAGES
-		client.HLEN(config.namespace + ':done:404', function(err, total_404)
+		client.GET(config.namespace + ':total', function(err, done)
 		{
-			client.HLEN(config.namespace + ':done:500', function(err, total_500)
+			// UGH, this sucks now. DAMN YOU NON-BLOCKING LANGUAGES
+			client.HLEN(config.namespace + ':done:404', function(err, total_404)
 			{
-				logule.info(format("UPDATE: %s urls processed so far. Status codes, 500: %s, 404: %s", total, total_500, total_404));
+				client.HLEN(config.namespace + ':done:500', function(err, total_500)
+				{
+					process.nextTick(function()
+					{
+						logule.info(format("STATUS (%s%%): %s urls (of %s) processed so far. Status codes, 500: %s, 404: %s", (done/total*100).toFixed(2), done, total, total_500, total_404));
+					});
+				});
 			});
 		});
 	});
