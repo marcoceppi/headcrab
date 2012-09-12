@@ -65,7 +65,7 @@ function status()
 					{
 						process.nextTick(function()
 						{
-							logule.info(format("STATUS (%s%%): %s urls (of %s) processed so far. Status codes, 500: %s, 404: %s", (done/alltime*100).toFixed(2), done, total, total_500, total_404));
+							logule.info(format("STATUS (%s%%): %s urls (%s remain) processed so far. Status codes, 500: %s, 404: %s", (done/alltime*100).toFixed(2), done, total, total_500, total_404));
 						});
 					});
 				});
@@ -201,7 +201,7 @@ function process_url(channel, worker, url, cb)
 	if( argv.d )
 	{
 		url_parts = earl.parse(url);
-		if( url_parts.hostname.indexOf(argv.d) == -1 )
+		if( typeof url_parts.hostname == 'string' && url_parts.hostname.indexOf(argv.d) == -1 )
 		{
 			process.nextTick(function()
 			{
