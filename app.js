@@ -30,6 +30,7 @@ process.on('SIGTERM', function()
 	cleanup();
 	process.exit(1);
 });
+
 process.on('SIGINT', function()
 {
 	cleanup();
@@ -109,73 +110,71 @@ function work(channel, worker)
 			}
 
 			log[worker].debug(format("Found %s URLs on %s (code: %s)", moar_urls.length, url, code));
-
-			process_urls(channel, worker, moar_urls, browser, function(err, channel, worker)
+			// Lamarr returns a list of URLS (or nil)
+			for(var key in moar_urls)
 			{
-				if( argv.s > 0 )
+				raw_url = moar_urls[key];
+				clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
+
+				process_url(channel, worker, clean_url, function(err, final_url, channel, worker)
 				{
-					setTimeout(function()
+					if( err )
 					{
-						log[channel].debug(format("Returning %s back to the queue", worker));
-						client.publish(channel, worker);
-					}, argv.s * 1000);
-				}
-				else
+						if( argv.w )
+						{
+							log[worker].debug(err);
+						}
+
+						return;
+					}
+
+					client.RPUSH(config.namespace + ':queue', final_url);
+				});
+			}
+
+			client.INCR(config.namespace + ':total');
+
+			if( argv.s > 0 )
+			{
+				setTimeout(function()
 				{
 					log[channel].debug(format("Returning %s back to the queue", worker));
 					client.publish(channel, worker);
-				}
-
-				client.INCR(config.namespace + ':total');
-			});
+				}, argv.s * 1000);
+			}
+			else
+			{
+				log[channel].debug(format("Returning %s back to the queue", worker));
+				client.publish(channel, worker);
+			}
 		});
 	});
 }
 
-function process_urls(channel, worker, urls, browser, cb)
+function process_url(channel, worker, url, cb)
 {
-	// Lamarr returns a list of URLS (or nil)
-	for(var key in urls)
+	if( argv.d )
 	{
-		raw_url = urls[key];
-		clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
-
-		if( argv.d )
+		url_parts = earl.parse(url);
+		if( url_parts.hostname.indexOf(argv.d) == -1 )
 		{
-			url_parts = earl.parse(clean_url);
-			if( url_parts.hostname.indexOf(argv.d) == -1 )
-			{
-				log[worker].debug(format("URL %s is not in the %s network", clean_url, argv.d));
-				clean_url = false;
-			}
-		}
-
-		if( clean_url )
-		{
-//			log[worker].info("IS IT CLEAN ENOUGH!? "+clean_url);
-			//client.HEXISTS(config.namespace + ':done:200', clean_url, function(err, exists, foo)
-			//{
-//				if( exists == 0 && !err )
-//				{
-					//if( argv.w )
-					//{
-//						log[worker].debug(format("Adding the following url: %s from (%s)", clean_url, raw_url));
-					//}
-
-					client.RPUSH(config.namespace + ':queue', clean_url);
-//				}
-//				else
-//				{
-//					if( argv.w )
-//					{
-//						log[worker].debug(format("URL (%s) already exists.", clean_url));
-//					}
-//				}
-//			});
+			cb(format("URL %s is not in %s network", url, argv.d), null, channel, worker);
+			return;
 		}
 	}
 
-	cb(null, channel, worker);
+	//log[worker].info("IS IT CLEAN ENOUGH!? "+url);
+	client.HEXISTS(config.namespace + ':done:200', url, function(err, exists, foo)
+	{
+		if( exists > 0 || err )
+		{
+			cb(format("URL (%s) already exists.", url), url, channel, worker);
+			return;
+		}
+
+		cb(null, url, channel, worker);
+		return;
+	});
 }
 
 /**
