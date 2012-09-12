@@ -56,14 +56,17 @@ function status()
 	{
 		client.GET(config.namespace + ':total', function(err, done)
 		{
-			// UGH, this sucks now. DAMN YOU NON-BLOCKING LANGUAGES
-			client.HLEN(config.namespace + ':done:404', function(err, total_404)
+			client.GET(config.namespace + ':alltime', function(err, alltime)
 			{
-				client.HLEN(config.namespace + ':done:500', function(err, total_500)
+				// UGH, this sucks now. DAMN YOU NON-BLOCKING LANGUAGES
+				client.HLEN(config.namespace + ':done:404', function(err, total_404)
 				{
-					process.nextTick(function()
+					client.HLEN(config.namespace + ':done:500', function(err, total_500)
 					{
-						logule.info(format("STATUS (%s%%): %s urls (of %s) processed so far. Status codes, 500: %s, 404: %s", (done/total*100).toFixed(2), done, total, total_500, total_404));
+						process.nextTick(function()
+						{
+							logule.info(format("STATUS (%s%%): %s urls (of %s) processed so far. Status codes, 500: %s, 404: %s", (done/alltime*100).toFixed(2), done, total, total_500, total_404));
+						});
 					});
 				});
 			});
@@ -98,48 +101,15 @@ function work(channel, worker)
 		log[channel].debug(format("Processing new available worker: %s", worker));
 		log[worker].debug(format("Got the following URL: '%s'", url));
 
-		lamarr.procreate(url, function(err, moar_urls, code, browser)
+		process_url(channel, worker, url, function(err, url, channel, worker)
 		{
-			if( !err )
+			if( err )
 			{
-				// If there is no "real" error, then just drop the URL in to a bucket
-				client.HINCRBY(config.namespace + ':done:' + code, url, 1);
-			}
-
-			if( err || !moar_urls )
-			{
-				// Just push the worker back in the Queue, walk away.
-				log[worker].debug(format("Either Err (%s) or no URLs found (%s) at %s", err, moar_urls.length, url));
-				log[channel].debug(format("Returning %s back to the queue", worker));
-				client.publish(channel, worker);
-				return;
-			}
-
-			log[worker].debug(format("Found %s URLs on %s (code: %s)", moar_urls.length, url, code));
-			// Lamarr returns a list of URLS (or nil)
-			async.forEach(moar_urls, function(raw_url, cb)
-			{
-				clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
-
-				process_url(channel, worker, clean_url, function(err, final_url, channel, worker)
+				if( argv.w )
 				{
-					if( err )
-					{
-						if( argv.w )
-						{
-							log[worker].debug(err);
-						}
-
-						cb();
-						return;
-					}
-
-					client.RPUSH(config.namespace + ':queue', final_url);
-					cb();
-				});
-			},
-			function(err)
-			{
+					log[worker].debug(err);
+				}
+				
 				client.INCR(config.namespace + ':total');
 
 				if( argv.s > 0 )
@@ -155,6 +125,72 @@ function work(channel, worker)
 					log[channel].debug(format("Returning %s back to the queue", worker));
 					client.publish(channel, worker);
 				}
+				
+				return;
+			}
+						
+
+			lamarr.procreate(url, function(err, moar_urls, code, browser)
+			{
+				if( !err )
+				{
+					// If there is no "real" error, then just drop the URL in to a bucket
+					client.HINCRBY(config.namespace + ':done:' + code, url, 1);
+				}
+
+				if( err || !moar_urls )
+				{
+					// Just push the worker back in the Queue, walk away.
+					log[worker].debug(format("Either Err (%s) or no URLs found (%s) at %s", err, moar_urls.length, url));
+					log[channel].debug(format("Returning %s back to the queue", worker));
+					client.publish(channel, worker);
+					return;
+				}
+
+				client.HINCRBY(config.namespace + ':done:' + code, url, 1);
+
+				log[worker].debug(format("Found %s URLs on %s (code: %s)", moar_urls.length, url, code));
+				// Lamarr returns a list of URLS (or nil)
+				async.forEach(moar_urls, function(raw_url, cb)
+				{
+					clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
+
+					process_url(channel, worker, clean_url, function(err, final_url, channel, worker)
+					{
+						if( err )
+						{
+							if( argv.w )
+							{
+								log[worker].debug(err);
+							}
+
+							cb();
+							return;
+						}
+
+						client.INCR(config.namespace + ':alltime');
+						client.RPUSH(config.namespace + ':queue', final_url);
+						cb();
+					});
+				},
+				function(err)
+				{
+					client.INCR(config.namespace + ':total');
+
+					if( argv.s > 0 )
+					{
+						setTimeout(function()
+						{
+							log[channel].debug(format("Returning %s back to the queue", worker));
+							client.publish(channel, worker);
+						}, argv.s * 1000);
+					}
+					else
+					{
+						log[channel].debug(format("Returning %s back to the queue", worker));
+						client.publish(channel, worker);
+					}
+				});
 			});
 		});
 	});
