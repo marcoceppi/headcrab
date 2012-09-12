@@ -111,9 +111,8 @@ function work(channel, worker)
 
 			log[worker].debug(format("Found %s URLs on %s (code: %s)", moar_urls.length, url, code));
 			// Lamarr returns a list of URLS (or nil)
-			for(var key in moar_urls)
+			async.forEach(moar_urls, function(raw_url, cb)
 			{
-				raw_url = moar_urls[key];
 				clean_url = format_url(raw_url, browser.location.protocol+'//'+browser.location.host);
 
 				process_url(channel, worker, clean_url, function(err, final_url, channel, worker)
@@ -125,28 +124,32 @@ function work(channel, worker)
 							log[worker].debug(err);
 						}
 
+						cb();
 						return;
 					}
 
 					client.RPUSH(config.namespace + ':queue', final_url);
+					cb();
 				});
-			}
-
-			client.INCR(config.namespace + ':total');
-
-			if( argv.s > 0 )
+			},
+			function(err)
 			{
-				setTimeout(function()
+				client.INCR(config.namespace + ':total');
+
+				if( argv.s > 0 )
+				{
+					setTimeout(function()
+					{
+						log[channel].debug(format("Returning %s back to the queue", worker));
+						client.publish(channel, worker);
+					}, argv.s * 1000);
+				}
+				else
 				{
 					log[channel].debug(format("Returning %s back to the queue", worker));
 					client.publish(channel, worker);
-				}, argv.s * 1000);
-			}
-			else
-			{
-				log[channel].debug(format("Returning %s back to the queue", worker));
-				client.publish(channel, worker);
-			}
+				}
+			});
 		});
 	});
 }
@@ -158,7 +161,10 @@ function process_url(channel, worker, url, cb)
 		url_parts = earl.parse(url);
 		if( url_parts.hostname.indexOf(argv.d) == -1 )
 		{
-			cb(format("URL %s is not in %s network", url, argv.d), null, channel, worker);
+			process.nextTick(function()
+			{
+				cb(format("URL %s is not in %s network", url, argv.d), null, channel, worker);
+			});
 			return;
 		}
 	}
@@ -166,14 +172,16 @@ function process_url(channel, worker, url, cb)
 	//log[worker].info("IS IT CLEAN ENOUGH!? "+url);
 	client.HEXISTS(config.namespace + ':done:200', url, function(err, exists, foo)
 	{
-		if( exists > 0 || err )
+		process.nextTick(function()
 		{
-			cb(format("URL (%s) already exists.", url), url, channel, worker);
-			return;
-		}
+			if( exists > 0 || err )
+			{
+				cb(format("URL (%s) already exists.", url), url, channel, worker);
+				return;
+			}
 
-		cb(null, url, channel, worker);
-		return;
+			cb(null, url, channel, worker);
+		});
 	});
 }
 
